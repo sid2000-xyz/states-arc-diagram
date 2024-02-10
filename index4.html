@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://d3js.org/d3.v4.js"></script>
+    <script src="https://d3js.org/d3-sankey.v0.12.js"></script>
+    <style>
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            background: #333;
+            color: #fff;
+            padding: 5px;
+            border-radius: 5px;
+            pointer-events: none;
+            display: none;
+        }
+
+        .bullet {
+            fill: steelblue;
+        }
+    </style>
+</head>
+<body>
+    <div id="my_dataviz"></div>
+
+    <script>
+        var margin = { top: 20, right: 30, bottom: 20, left: 30 },
+            width = 800 - margin.left - margin.right,
+            height = 500 - margin.top - margin.bottom;
+
+        var svg = d3.select("#my_dataviz")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+        d3.json("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/data_network.json", function (data) {
+            var allNodes = data.nodes.map(function (d) { return d.name });
+
+            var x = d3.scalePoint()
+                .range([0, width])
+                .domain(allNodes);
+
+            var colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+            var nodeDegrees = {};
+            data.links.forEach(function (link) {
+                nodeDegrees[link.source] = (nodeDegrees[link.source] || 0) + 1;
+                nodeDegrees[link.target] = (nodeDegrees[link.target] || 0) + 1;
+            });
+
+            var tooltip = d3.select("#my_dataviz")
+                .append("div")
+                .attr("class", "tooltip");
+
+            var nodes = svg
+                .selectAll("mynodes")
+                .data(data.nodes)
+                .enter()
+                .append("circle")
+                .attr("cx", function (d) { return x(d.name) })
+                .attr("cy", height - 30)
+                .attr("r", function (d) { return Math.sqrt(nodeDegrees[d.id]) * 20; })
+                .style("fill", function (d) { return colorScale(d.name) })
+                .on('mouseover', function (d) {
+                    tooltip.html(`<strong>${d.name}</strong><br>No. of Links: ${nodeDegrees[d.id]}`)
+                        .style("left", (d3.event.pageX) + "px")
+                        .style("top", (d3.event.pageY - 28) + "px")
+                        .style("display", "block");
+
+                    nodes.style('fill', "#B8B8B8");
+                    d3.select(this).style('fill', '#69b3b2');
+                    links
+                        .style('stroke', function (link_d) {
+                            return link_d.source === d.id || link_d.target === d.id ? colorScale(d.name) : '#b8b8b8';
+                        })
+                        .style('stroke-width', function (link_d) { return link_d.source === d.id || link_d.target === d.id ? 4 : 1; });
+                })
+                .on('mouseout', function (d) {
+                    tooltip.style("display", "none");
+
+                    nodes.style('fill', function (d) { return colorScale(d.name) });
+                    links
+                        .style('stroke', 'black')
+                        .style('stroke-width', '1');
+                });
+
+            var labels = svg
+                .selectAll("mylabels")
+                .data(data.nodes)
+                .enter()
+                .append("text")
+                .attr("x", function (d) { return x(d.name) })
+                .attr("y", height - 10)
+                .text(function (d) { return d.name })
+                .style("text-anchor", "middle");
+
+            var idToNode = {};
+            data.nodes.forEach(function (n) {
+                idToNode[n.id] = n;
+            });
+
+            var tooltipLink = d3.select("#my_dataviz")
+                .append("div")
+                .attr("class", "tooltip");
+
+            var links = svg
+                .selectAll('mylinks')
+                .data(data.links)
+                .enter()
+                .append('path')
+                .attr('d', function (d) {
+                    start = x(idToNode[d.source].name);
+                    end = x(idToNode[d.target].name);
+                    return ['M', start, height - 30,
+                        'A', (start - end) / 2, ',', (start - end) / 2, 0, 0, ',',
+                        start < end ? 1 : 0, end, ',', height - 30].join(' ');
+                })
+                .style("fill", "none")
+                .attr("stroke", function (d) { return colorScale(idToNode[d.source].name); })
+                .on('mouseover', function (d) {
+                    tooltipLink.html(`<strong>From:</strong> ${idToNode[d.source].name}<br><strong>To:</strong> ${idToNode[d.target].name}<br><strong>Quantity:</strong> ${d.value}`)
+                        .style("left", (d3.event.pageX) + "px")
+                        .style("top", (d3.event.pageY - 28) + "px")
+                        .style("display", "block");
+                })
+                .on('mouseout', function (d) {
+                    tooltipLink.style("display", "none");
+                });
+
+            var bulletGroup = svg.append("g")
+                .selectAll("g")
+                .data(data.links)
+                .enter().append("g")
+                .attr("class", "bullet-group");
+
+            var bullets = bulletGroup.selectAll("circle")
+                .data(function (d) { return [d]; })
+                .enter().append("circle")
+                .attr("r", 5)
+                .attr("fill", function (d) { return colorScale(idToNode[d.source].name); })
+                .attr("transform", function (d) {
+                    var start = x(idToNode[d.source].name);
+                    var end = x(idToNode[d.target].name);
+                    var interpolate = d3.interpolate(0, 1);
+                    return function (t) {
+                        var point = interpolate(t);
+                        var xPosition = start + point * (end - start);
+                        return "translate(" + xPosition + "," + (height - 30) + ")";
+                    };
+                })
+                .style("opacity", 0)
+                .transition()
+                .delay(function (d, i) { return i * 500; })
+                .duration(2000)
+                .style("opacity", 1);
+
+            nodes
+                .on('mouseover', function (d) {
+                    nodes.style('fill', "#B8B8B8");
+                    d3.select(this).style('fill', '#69b3b2');
+                    links
+                        .style('stroke', function (link_d) {
+                            return link_d.source === d.id || link_d.target === d.id ? colorScale(d.name) : '#b8b8b8';
+                        })
+                        .style('stroke-width', function (link_d) { return link_d.source === d.id || link_d.target === d.id ? 4 : 1; });
+
+                    tooltip.html(`<strong>${d.name}</strong><br>No. of Links: ${nodeDegrees[d.id]}`)
+                        .style("left", (d3.event.pageX) + "px")
+                        .style("top", (d3.event.pageY - 28) + "px")
+                        .style("display", "block");
+                })
+                .on('mouseout', function (d) {
+                    tooltip.style("display", "none");
+
+                    nodes.style('fill', function (d) { return colorScale(d.name) });
+                    links
+                        .style('stroke', 'black')
+                        .style('stroke-width', '1');
+                });
+        });
+
+        svg
+            .append("text")
+            .attr("text-anchor", "middle")
+            .style("fill", "#B8B8B8")
+            .style("font-size", "17px")
+            .attr("x", 50)
+            .attr("y", 10)
+            .html("Hover nodes");
+    </script>
+</body>
+</html>
