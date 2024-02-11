@@ -3,9 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://d3js.org/d3.v4.js"></script>
-    <script src="https://d3js.org/d3-sankey.v0.12.js"></script>
     <style>
+        #container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
         .tooltip {
             position: absolute;
             text-align: center;
@@ -17,18 +22,34 @@
             display: none;
         }
 
-        .bullet {
-            fill: steelblue;
+        .labels {
+            font-size: 20px;
+            dominant-baseline: middle;
+            text-anchor: middle;
+            transition: opacity 0.3s ease-in-out; /* Add a transition effect for opacity */
+        }
+
+        .highlighted {
+            fill: rgb(1, 1, 1);
+            font-size: 30px; /* Adjust the highlight color as needed */
+        }
+
+        .faded {
+            opacity: 0.3; /* Adjust the opacity level as needed */
         }
     </style>
+    <script src="https://d3js.org/d3.v4.js"></script>
+    <script src="https://d3js.org/d3-sankey.v0.12.js"></script>
 </head>
 <body>
-    <div id="my_dataviz"></div>
+    <div id="container">
+        <div id="my_dataviz"></div>
+    </div>
 
     <script>
-        var margin = { top: 20, right: 30, bottom: 20, left: 30 },
-            width = 800 - margin.left - margin.right,
-            height = 500 - margin.top - margin.bottom;
+        var margin = { top: 0, right: 80, bottom: 150, left: 150 },
+            width = 1500 - margin.left - margin.right,
+            height = 900 - margin.top - margin.bottom;
 
         var svg = d3.select("#my_dataviz")
             .append("svg")
@@ -37,8 +58,13 @@
             .append("g")
             .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
-        d3.json("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/data_network.json", function (data) {
+        d3.json("http://localhost:8000/data", function (data) {
             var allNodes = data.nodes.map(function (d) { return d.name });
+
+            // Use production values to determine node size
+            var nodeSizeScale = d3.scaleLinear()
+                .domain([0, d3.max(data.nodes, function (d) { return d.production; })])
+                .range([10, 50]); // Adjust the range of node sizes as needed
 
             var x = d3.scalePoint()
                 .range([0, width])
@@ -47,12 +73,14 @@
             var colorScale = d3.scaleOrdinal(d3.schemeCategory10);
 
             var nodeDegrees = {};
+            var nodeOutDegrees = {};
             data.links.forEach(function (link) {
                 nodeDegrees[link.source] = (nodeDegrees[link.source] || 0) + 1;
                 nodeDegrees[link.target] = (nodeDegrees[link.target] || 0) + 1;
+                nodeOutDegrees[link.source] = (nodeOutDegrees[link.source] || 0) + 1;
             });
 
-            var tooltip = d3.select("#my_dataviz")
+            var tooltip = d3.select("#container")
                 .append("div")
                 .attr("class", "tooltip");
 
@@ -61,31 +89,53 @@
                 .data(data.nodes)
                 .enter()
                 .append("circle")
-                .attr("cx", function (d) { return x(d.name) })
+                .attr("cx", function (d) { return x(d.name) + nodeSizeScale(d.production) / 2; })
                 .attr("cy", height - 30)
-                .attr("r", function (d) { return Math.sqrt(nodeDegrees[d.id]) * 20; })
+                .attr("r", function (d) { return nodeSizeScale(d.production); })
                 .style("fill", function (d) { return colorScale(d.name) })
                 .on('mouseover', function (d) {
-                    tooltip.html(`<strong>${d.name}</strong><br>No. of Links: ${nodeDegrees[d.id]}`)
+                    tooltip.html(`<strong>${d.name}</strong><br>No. of Links: ${nodeDegrees[d.id]}<br>Production: ${d.production}`)
                         .style("left", (d3.event.pageX) + "px")
                         .style("top", (d3.event.pageY - 28) + "px")
                         .style("display", "block");
 
-                    nodes.style('fill', "#B8B8B8");
-                    d3.select(this).style('fill', '#69b3b2');
                     links
                         .style('stroke', function (link_d) {
-                            return link_d.source === d.id || link_d.target === d.id ? colorScale(d.name) : '#b8b8b8';
+                            return link_d.source === d.id || link_d.target === d.id ? colorScale(idToNode[link_d.source].name) : '#b8b8b8';
                         })
                         .style('stroke-width', function (link_d) { return link_d.source === d.id || link_d.target === d.id ? 4 : 1; });
+
+                    nodes
+                        .filter(function (node_d) {
+                            return node_d.id !== d.id;
+                        })
+                        .classed('faded', true);
+
+                    labels
+                        .filter(function (label_d) {
+                            return label_d.id !== d.id;
+                        })
+                        .classed('faded', true);
+
+                    labels.filter(function (label_d) {
+                        return label_d.id === d.id;
+                    }).classed('highlighted', true);
                 })
                 .on('mouseout', function (d) {
                     tooltip.style("display", "none");
 
-                    nodes.style('fill', function (d) { return colorScale(d.name) });
                     links
-                        .style('stroke', 'black')
+                        .style('stroke', function (link_d) {
+                            return colorScale(idToNode[link_d.source].name);
+                        })
                         .style('stroke-width', '1');
+
+                    nodes
+                        .classed('faded', false);
+
+                    labels
+                        .classed('faded', false)
+                        .classed('highlighted', false);
                 });
 
             var labels = svg
@@ -93,17 +143,20 @@
                 .data(data.nodes)
                 .enter()
                 .append("text")
-                .attr("x", function (d) { return x(d.name) })
-                .attr("y", height - 10)
+                .attr("class", "labels")
+                .attr("x", 0)
+                .attr("y", 0)
                 .text(function (d) { return d.name })
-                .style("text-anchor", "middle");
+                .style("text-anchor", "end")
+                .attr("transform", function (d) { return ("translate(" + (x(d.name)) + "," + (height - 15) + ")rotate(-45)") })
+                .text(function (d) { return d.name });
 
             var idToNode = {};
             data.nodes.forEach(function (n) {
                 idToNode[n.id] = n;
             });
 
-            var tooltipLink = d3.select("#my_dataviz")
+            var tooltipLink = d3.select("#container")
                 .append("div")
                 .attr("class", "tooltip");
 
@@ -113,11 +166,11 @@
                 .enter()
                 .append('path')
                 .attr('d', function (d) {
-                    start = x(idToNode[d.source].name);
-                    end = x(idToNode[d.target].name);
+                    start = x(idToNode[d.source].name) + nodeSizeScale(idToNode[d.source].production) / 2;
+                    end = x(idToNode[d.target].name) + nodeSizeScale(idToNode[d.target].production) / 2;
                     return ['M', start, height - 30,
-                        'A', (start - end) / 2, ',', (start - end) / 2, 0, 0, ',',
-                        start < end ? 1 : 0, end, ',', height - 30].join(' ');
+                    'A', (start - end) / 2, ',', (start - end) / 2, 0, 0, ',',
+                    start < end ? 1 : 0, end, ',', height - 30].join(' ');
                 })
                 .style("fill", "none")
                 .attr("stroke", function (d) { return colorScale(idToNode[d.source].name); })
@@ -131,66 +184,53 @@
                     tooltipLink.style("display", "none");
                 });
 
-            var bulletGroup = svg.append("g")
-                .selectAll("g")
-                .data(data.links)
-                .enter().append("g")
-                .attr("class", "bullet-group");
-
-            var bullets = bulletGroup.selectAll("circle")
-                .data(function (d) { return [d]; })
-                .enter().append("circle")
-                .attr("r", 5)
-                .attr("fill", function (d) { return colorScale(idToNode[d.source].name); })
-                .attr("transform", function (d) {
-                    var start = x(idToNode[d.source].name);
-                    var end = x(idToNode[d.target].name);
-                    var interpolate = d3.interpolate(0, 1);
-                    return function (t) {
-                        var point = interpolate(t);
-                        var xPosition = start + point * (end - start);
-                        return "translate(" + xPosition + "," + (height - 30) + ")";
-                    };
-                })
-                .style("opacity", 0)
-                .transition()
-                .delay(function (d, i) { return i * 500; })
-                .duration(2000)
-                .style("opacity", 1);
-
             nodes
                 .on('mouseover', function (d) {
-                    nodes.style('fill', "#B8B8B8");
-                    d3.select(this).style('fill', '#69b3b2');
                     links
                         .style('stroke', function (link_d) {
-                            return link_d.source === d.id || link_d.target === d.id ? colorScale(d.name) : '#b8b8b8';
+                            return link_d.source === d.id || link_d.target === d.id ? colorScale(idToNode[link_d.source].name) : '#b8b8b8';
                         })
                         .style('stroke-width', function (link_d) { return link_d.source === d.id || link_d.target === d.id ? 4 : 1; });
 
-                    tooltip.html(`<strong>${d.name}</strong><br>No. of Links: ${nodeDegrees[d.id]}`)
+                    tooltip.html(`<strong>${d.name}</strong><br>Production: ${d.production}`)
                         .style("left", (d3.event.pageX) + "px")
                         .style("top", (d3.event.pageY - 28) + "px")
                         .style("display", "block");
+
+                    nodes
+                        .filter(function (node_d) {
+                            return node_d.id !== d.id;
+                        })
+                        .classed('faded', true);
+
+                    labels
+                        .filter(function (label_d) {
+                            return label_d.id !== d.id;
+                        })
+                        .classed('faded', true);
+
+                    labels.filter(function (label_d) {
+                        return label_d.id === d.id;
+                    }).classed('highlighted', true);
                 })
                 .on('mouseout', function (d) {
                     tooltip.style("display", "none");
 
-                    nodes.style('fill', function (d) { return colorScale(d.name) });
                     links
-                        .style('stroke', 'black')
+                        .style('stroke', function (link_d) {
+                            return colorScale(idToNode[link_d.source].name);
+                        })
                         .style('stroke-width', '1');
+
+                    nodes
+                        .classed('faded', false);
+
+                    labels
+                        .classed('faded', false)
+                        .classed('highlighted', false);
                 });
         });
 
-        svg
-            .append("text")
-            .attr("text-anchor", "middle")
-            .style("fill", "#B8B8B8")
-            .style("font-size", "17px")
-            .attr("x", 50)
-            .attr("y", 10)
-            .html("Hover nodes");
     </script>
 </body>
 </html>
